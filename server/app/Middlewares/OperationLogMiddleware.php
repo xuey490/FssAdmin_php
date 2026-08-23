@@ -58,7 +58,7 @@ class OperationLogMiddleware
 
         // 只记录写操作
         $method = strtoupper($request->getMethod());
-        if (!in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+        if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], true)) {
             return $response;
         }
 
@@ -99,12 +99,7 @@ class OperationLogMiddleware
                     $params  = is_array($decoded) ? $decoded : [];
                 }
             }
-            // 脱敏：移除密码字段
-            unset($params['password'], $params['old_password'], $params['new_password']);
-            $requestData = json_encode($params, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if (strlen($requestData) > 2000) {
-                $requestData = substr($requestData, 0, 2000) . '...';
-            }
+            $requestData = $this->encodeRequestData($params);
 
             // 解析路由名称作为 service_name
             $routeInfo   = $request->attributes->get('_route');
@@ -133,6 +128,48 @@ class OperationLogMiddleware
                 error_log('[OperationLogMiddleware] ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
             }
         }
+    }
+
+    /**
+     * 脱敏并按 UTF-8 字符边界截断请求体，避免 substr 切断汉字触发 MySQL 1366。
+     *
+     * @param array<array-key, mixed> $params
+     * @return string
+     */
+    protected function encodeRequestData(array $params): string
+    {
+        unset($params['password'], $params['old_password'], $params['new_password']);
+        $params = $this->truncateLargeFields($params);
+        $json = json_encode($params, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+        if (!is_string($json)) {
+            return '{}';
+        }
+
+        $maxBytes = 2000;
+        if (strlen($json) <= $maxBytes) {
+            return $json;
+        }
+
+        return mb_strcut($json, 0, $maxBytes, 'UTF-8') . '...';
+    }
+
+    /**
+     * @param array<array-key, mixed> $params
+     * @return array<array-key, mixed>
+     */
+    protected function truncateLargeFields(array $params): array
+    {
+        foreach ($params as $key => $value) {
+            if (is_array($value)) {
+                $params[$key] = $this->truncateLargeFields($value);
+                continue;
+            }
+            if (is_string($value) && strlen($value) > 200) {
+                $params[$key] = mb_strcut($value, 0, 200, 'UTF-8') . '...';
+            }
+        }
+
+        return $params;
     }
 
     /**
