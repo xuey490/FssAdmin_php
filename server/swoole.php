@@ -616,20 +616,125 @@ function format_memory_line(Table $table): string
     return '[Memory] ' . $body . '  threshold=' . MEMORY_LIMIT_MB;
 }
 
-function signal_master_reload(string $reason, bool $daemonize): bool
+/**
+ * addProcess + Event::wait() 必须自己结束事件循环，否则 Manager 关不掉自定义进程。
+ *
+ * @return void
+ */
+function bind_user_process_stop_signals(): void
 {
-    $pid = read_master_pid();
-    if ($pid === null || !function_exists('posix_kill')) {
-        emit_monitor('[Reload] skipped, master pid unavailable (' . $reason . ')', $daemonize);
+    $stop = static function (): void {
+        Timer::clearAll();
+        Event::exit();
+        exit(0);
+    };
+    Process::signal(SIGTERM, $stop);
+    Process::signal(SIGINT, $stop);
+}
+
+/**
+ * Ctrl+C 会进监视进程。Windows 上 Master 退出不会带走 addProcess 子进程，
+ * Event::exit() 在信号回调里也经常退不掉，必须 SIGKILL 整棵进程树再 exit。
+ *
+ * @param SwooleHttpServer $http
+ * @param Table $workerStats
+ * @param bool $daemonize
+ * @return void
+ */
+function bind_monitor_sigint_shutdown(SwooleHttpServer $http, Table $workerStats, bool $daemonize): void
+{
+    Process::signal(SIGINT, static function () use ($http, $workerStats, $daemonize): void {
+        emit_monitor('[Shutdown] SIGINT, stopping', $daemonize);
+        force_stop_tree($http, $workerStats);
+        Timer::clearAll();
+        exit(0);
+    });
+}
+
+/**
+ * @param SwooleHttpServer $http
+ * @param Table $workerStats
+ * @return void
+ */
+function force_stop_tree(SwooleHttpServer $http, Table $workerStats): void
+{
+    $self = (int) getmypid();
+    $mgr = (int) $http->manager_pid;
+    $master = (int) $http->master_pid;
+    $pids = [];
+    foreach ($workerStats as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $pid = (int) ($row['pid'] ?? 0);
+        if ($pid > 0 && $pid !== $self) {
+            $pids[] = $pid;
+        }
+    }
+    $stats = $http->stats();
+    if (is_array($stats)) {
+        $workerNum = (int) ($stats['worker_num'] ?? HTTP_WORKER_NUM);
+        $taskNum = (int) ($stats['task_worker_num'] ?? 0);
+        $userNum = (int) ($stats['user_worker_num'] ?? 0);
+        for ($i = 0; $i < $userNum; $i++) {
+            $pid = (int) $http->getWorkerPid($workerNum + $taskNum + $i);
+            if ($pid > 0 && $pid !== $self) {
+                $pids[] = $pid;
+            }
+        }
+    }
+    if ($mgr > 0 && $mgr !== $self) {
+        $pids[] = $mgr;
+    }
+    if ($master > 0 && $master !== $self) {
+        $pids[] = $master;
+    }
+
+    $http->shutdown();
+    foreach (array_unique($pids) as $pid) {
+        Process::kill((int) $pid, SIGKILL);
+    }
+}
+
+/**
+ * @param SwooleHttpServer $server
+ * @param int $signal
+ * @return void
+ */
+function stop_user_processes(SwooleHttpServer $server, int $signal): void
+{
+    $stats = $server->stats();
+    if (!is_array($stats)) {
+        return;
+    }
+    $workerNum = (int) ($stats['worker_num'] ?? HTTP_WORKER_NUM);
+    $taskNum = (int) ($stats['task_worker_num'] ?? 0);
+    $userNum = (int) ($stats['user_worker_num'] ?? 0);
+    $self = (int) getmypid();
+    for ($i = 0; $i < $userNum; $i++) {
+        $pid = (int) $server->getWorkerPid($workerNum + $taskNum + $i);
+        if ($pid <= 0 || $pid === $self) {
+            continue;
+        }
+        Process::kill($pid, $signal);
+    }
+}
+
+/**
+ * @param SwooleHttpServer $http
+ * @param string $reason
+ * @param bool $daemonize
+ * @return bool
+ */
+function request_worker_reload(SwooleHttpServer $http, string $reason, bool $daemonize): bool
+{
+    // ponytail: 用 Server::reload() 通知 Manager，避免 posix_kill(master, SIGUSR1) 打乱 Master 的 signalfd
+    if (!$http->reload()) {
+        emit_monitor('[Reload] reload() failed (' . $reason . ')', $daemonize);
 
         return false;
     }
-    if (!posix_kill($pid, SIGUSR1)) {
-        emit_monitor('[Reload] SIGUSR1 failed pid=' . $pid . ' (' . $reason . ')', $daemonize);
-
-        return false;
-    }
-    emit_monitor('[Reload] SIGUSR1 -> master pid=' . $pid . ' (' . $reason . ')', $daemonize);
+    emit_monitor('[Reload] HTTP workers (' . $reason . ')', $daemonize);
 
     return true;
 }
@@ -820,6 +925,7 @@ function attach_queue_processes(SwooleHttpServer $http, array $redisConfig, arra
 
     for ($i = 0; $i < $workerCount; $i++) {
         $http->addProcess(new Process(static function () use ($i, $redisConfig, $databaseConfig, $queues): void {
+            bind_user_process_stop_signals();
             $label = 'Queue-Worker #' . $i;
             log_info(sprintf('[%s] PID %d 启动', $label, getmypid()));
 
@@ -886,7 +992,10 @@ function attach_queue_processes(SwooleHttpServer $http, array $redisConfig, arra
 
 function attach_monitor_process(SwooleHttpServer $http, Table $workerStats, bool $daemonize): void
 {
-    $http->addProcess(new Process(static function () use ($workerStats, $daemonize): void {
+    $http->addProcess(new Process(static function () use ($http, $workerStats, $daemonize): void {
+        bind_user_process_stop_signals();
+        bind_monitor_sigint_shutdown($http, $workerStats, $daemonize);
+
         $watchDirs = [
             APP_ROOT . '/app',
             APP_ROOT . '/config',
@@ -897,7 +1006,7 @@ function attach_monitor_process(SwooleHttpServer $http, Table $workerStats, bool
         $lastMemReloadAt = 0.0;
         $lastFileReloadAt = 0.0;
 
-        Timer::tick(MEMORY_CHECK_INTERVAL_MS, static function () use ($workerStats, $daemonize, &$lastMemReloadAt): void {
+        Timer::tick(MEMORY_CHECK_INTERVAL_MS, static function () use ($http, $workerStats, $daemonize, &$lastMemReloadAt): void {
             emit_monitor(format_memory_line($workerStats), $daemonize);
             WorkermanHealth::writeHealthFile(HEALTH_FILE, worker_stats_snapshot($workerStats));
             $now = microtime(true);
@@ -920,12 +1029,13 @@ function attach_monitor_process(SwooleHttpServer $http, Table $workerStats, bool
                     $mb,
                     MEMORY_LIMIT_MB
                 ), $daemonize);
-                signal_master_reload('memory', $daemonize);
+                request_worker_reload($http, 'memory', $daemonize);
                 break;
             }
         });
 
         Timer::tick(FILE_WATCH_INTERVAL_MS, static function () use (
+            $http,
             $watchDirs,
             $daemonize,
             &$lastMtimes,
@@ -950,7 +1060,7 @@ function attach_monitor_process(SwooleHttpServer $http, Table $workerStats, bool
             $shown = array_slice($changed, 0, 5);
             $names = array_map(static fn (string $p): string => rel_watch_path($p), $shown);
             $extra = count($changed) > 5 ? ' ...' : '';
-            signal_master_reload('file ' . implode(', ', $names) . $extra, $daemonize);
+            request_worker_reload($http, 'file ' . implode(', ', $names) . $extra, $daemonize);
         });
 
         Event::wait();
@@ -1006,6 +1116,13 @@ function start_http_server(bool $daemonize): void
         print_startup_banner($server, $daemonize);
     });
 
+    $http->on('BeforeShutdown', static function (SwooleHttpServer $server): void {
+        log_info('[Shutdown] stopping user processes');
+        stop_user_processes($server, SIGTERM);
+        // ponytail: Windows/swoole-cli 上 SIGTERM 经常到不了 addProcess，关机再 SIGKILL
+        stop_user_processes($server, SIGKILL);
+    });
+
     $http->on('WorkerStart', function (SwooleHttpServer $server, int $workerId) use (&$framework, $redisConfig, $databaseConfig, $workerStats): void {
         $label = 'HTTP-Worker #' . $workerId;
         log_info(sprintf('[%s] PID %d started', $label, getmypid()));
@@ -1051,6 +1168,11 @@ function start_http_server(bool $daemonize): void
         log_info(sprintf('[HTTP-Worker #%d] 正在关闭连接池...', $workerId));
         PoolManager::closeAll();
         log_info(sprintf('[HTTP-Worker #%d] 连接池已关闭', $workerId));
+    });
+
+    // reload_async：旧 Worker 必须在 WorkerExit 清掉 Timer，否则进程退不掉，Ctrl+C / reload 会卡住
+    $http->on('WorkerExit', static function (): void {
+        Timer::clearAll();
     });
 
     $http->on('request', function (SwooleRequest $req, SwooleResponse $res) use (&$framework, $http, $workerStats): void {
