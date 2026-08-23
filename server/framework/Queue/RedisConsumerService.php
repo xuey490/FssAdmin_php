@@ -145,6 +145,22 @@ class RedisConsumerService
      */
     public function start(Worker $worker): void
     {
+        $this->startScheduled((int) $worker->id, function (float $seconds, callable $callback): void {
+            $timerId = Timer::add($seconds, $callback);
+            if ($this->timerId === null) {
+                $this->timerId = $timerId;
+            }
+        });
+    }
+
+    /**
+     * 用外部调度器启动消费（Swoole Timer::tick 等）。
+     *
+     * @param int $workerId 进程编号（仅用于日志）
+     * @param callable(float, callable(): void): void $everySeconds 注册周期任务：秒 + 回调
+     */
+    public function startScheduled(int $workerId, callable $everySeconds): void
+    {
         if ($this->running) {
             return;
         }
@@ -160,22 +176,20 @@ class RedisConsumerService
 
         $this->log(sprintf(
             '[RedisConsumer] Worker #%d 启动消费，队列：%s，批量：%d，轮询间隔：%.2fs',
-            $worker->id,
+            $workerId,
             $this->queue,
             $this->batchSize,
             $this->pollInterval
         ));
 
-        // 定时器驱动消费（非阻塞）
-        $this->timerId = Timer::add($this->pollInterval, function () {
+        $everySeconds($this->pollInterval, function (): void {
             $this->consumeBatch();
         });
 
-        // 每分钟打印统计日志
-        Timer::add(60.0, function () use ($worker) {
+        $everySeconds(60.0, function () use ($workerId): void {
             $this->log(sprintf(
                 '[RedisConsumer] Worker #%d 统计 | 已消费:%d 成功:%d 失败:%d 重试:%d 死信:%d | 队列:%s',
-                $worker->id,
+                $workerId,
                 $this->stats['consumed'],
                 $this->stats['success'],
                 $this->stats['failed'],

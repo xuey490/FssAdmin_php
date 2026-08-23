@@ -311,17 +311,24 @@ class MysqlPool implements PoolInterface
             $this->dsn['charset']
         );
 
-        $pdo = new PDO($dsn, $this->dsn['username'], $this->dsn['password'], [
+        $options = [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_PERSISTENT         => false, // 常驻进程不使用持久连接
+            PDO::ATTR_PERSISTENT         => false,
             PDO::ATTR_EMULATE_PREPARES   => false,
-            PDO::MYSQL_ATTR_INIT_COMMAND => sprintf(
-                "SET NAMES '%s' COLLATE '%s_unicode_ci'",
-                $this->dsn['charset'],
-                $this->dsn['charset']
-            ),
-        ]);
+        ];
+        $initSql = sprintf(
+            "SET NAMES '%s' COLLATE '%s_unicode_ci'",
+            $this->dsn['charset'],
+            $this->dsn['charset']
+        );
+        if (PHP_VERSION_ID >= 80500 && class_exists(\Pdo\Mysql::class)) {
+            $options[\Pdo\Mysql::ATTR_INIT_COMMAND] = $initSql;
+        } else {
+            $options[\PDO::MYSQL_ATTR_INIT_COMMAND] = $initSql;
+        }
+
+        $pdo = new PDO($dsn, $this->dsn['username'], $this->dsn['password'], $options);
 
         return $pdo;
     }

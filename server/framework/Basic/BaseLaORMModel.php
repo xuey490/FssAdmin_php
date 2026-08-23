@@ -487,14 +487,14 @@ class BaseLaORMModel extends Model
      * 获取模型字段列表
      *
      * 根据运行环境选择不同的获取方式：
-     * - Workerman 环境：使用 SchemaRegistry
+     * - Workerman / Swoole 常驻进程：使用 SchemaRegistry
      * - 其他环境：使用数据库查询
      *
      * @return array<mixed> 字段列表
      */
     public function getFields(): array
     {
-        if (defined('WORKERMAN_ENV')) {
+        if (defined('WORKERMAN_ENV') || defined('SWOOLE_ENV')) {
             return SchemaRegistry::getColumns($this->getTable());
         } else {
             return $this->getTableColumns();

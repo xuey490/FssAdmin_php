@@ -51,7 +51,7 @@ final class WorkermanHealth
     /**
      * 追加内存历史到 JSONL（便于 soak 对比与告警）.
      * @param array<mixed> $data
- */
+     */
     public static function appendMemoryHistory(string $logDir, array $data, ?string $label = null): void
     {
         if ($label !== null) {

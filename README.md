@@ -31,20 +31,37 @@
 
 ## 📖 项目简介
 
-**FSSADMIN** 是一个基于FSSPHP 的现代化全栈框架，采用 **Workerman** 常驻内存引擎驱动，支持 **多租户 SaaS 架构**。项目包含：
+**FSSADMIN** 是一个基于 FssPHP 的现代化全栈框架，支持 **多租户 SaaS 架构**。同一套业务代码可在 **PHP-FPM、Workerman、Swoole** 三种进程模型下运行，入口只适配 HTTP 层，控制器 / 服务 / 路由 / 权限无需改写。
 
-- **后端框架**: 自研轻量级 PHP 框架 (framework/)
-- **前端应用**: 基于 Vue 3 + Element Plus 的管理后台 (web/)
-- **插件系统**: 支持热插拔的功能扩展 (plugins/)
+项目包含：
+
+- **后端框架**: 自研轻量级 PHP 框架 (`framework/`)
+- **前端应用**: 基于 Vue 3 + Element Plus 的管理后台 (`web/`)
+- **插件系统**: 支持热插拔的功能扩展 (`plugins/`)
+
+### 三种启动模式（同一内核）
+
+这是本框架与多数 PHP 后台的差异点：业务写一次，运行时按环境选择。`Framework::handleRequest()` 对三种入口保持同一契约 `{ code, msg, message, data }`。
+
+| 模式 | 入口 | 启动 | 适合 |
+|------|------|------|------|
+| **PHP-FPM** | `public/index.php` | Nginx / Apache + php-fpm，或 `php -S localhost:8000 -t public` | 传统主机、共享部署、与现有 LNMP 共存 |
+| **Workerman** | `server.php` | `php server.php start` | 常驻内存、热重载、HTTP + WebSocket + 队列 |
+| **Swoole** | `swoole.php` | `swoole-cli swoole.php start` | 多进程 Worker、连接池、文件监视自动 reload Worker |
+
+**不要**同时启动 Workerman 与 Swoole（默认都占用 `8000` / `1234`）。
+
+Swoole 模式额外能力：`app/` `config/` `framework/` 文件变更自动平滑重载 HTTP Worker；Redis / MySQL 连接池；同进程 WebSocket（`addListener`，禁止再 `new` 第二个 Server）；队列自定义进程；`GET /_health` 查看各 Worker 内存与请求快照。Swoole 扩展不走 Composer，请使用 **swoole-cli 6.x**。
 
 ### 后端特点
 
 | 特性 | 说明 |
 |------|------|
-| 🚀 **高性能** | Workerman 常驻内存，比传统 PHP-FPM 性能提升 10 倍+ |
+| 🧬 **三运行时** | FPM / Workerman / Swoole 共用 `app/` + `framework/`，按入口切换进程模型 |
+| 🚀 **高性能** | 常驻内存（Workerman / Swoole）比传统 PHP-FPM 有数量级提升 |
 | 🏢 **多租户 SaaS** | 完整的租户隔离方案（数据行级隔离 + 菜单权限隔离） |
-| 🔐 **RBAC 权限** | 基于 多租户的 RBAC 权限控制模型 |
-| 🔌 **双 ORM 支持** | 同时支持 ThinkORM / Laravel ORM，(实验性阶段代码) |
+| 🔐 **RBAC 权限** | 基于多租户的 Casbin RBAC 权限控制模型 |
+| 🔌 **双 ORM 支持** | 同时支持 Laravel Eloquent / ThinkORM（`ORM_DRIVER` 切换） |
 | 🎨 **Attribute 路由** | PHP 8 原生注解路由，自动扫描与缓存 |
 | 🧩 **插件系统** | 完整的插件生命周期管理（安装/卸载/启用/禁用） |
 | 📦 **代码生成器** | 一键生成 CRUD 模板，提升开发效率 |
@@ -95,7 +112,7 @@
 - ✅ 代码生成器（CRUD 模板生成）
 - ✅ 数据库表结构导入
 - ✅ 插件市场与管理终端
-- ✅ 热重载开发模式
+- ✅ 热重载开发模式（Workerman `reload` / Swoole 文件监视自动换 Worker）
 
 ### 内容管理 (Article)
 - ✅ 文章发布与管理
@@ -117,26 +134,35 @@
 
 ### 后端技术栈
 
+版本与仓库根目录 `composer.json` 对齐（`require` / `require-dev`）。
+
 | 类别 | 技术 | 版本 | 说明 |
 |------|------|------|------|
 | **运行时** | PHP | ^8.3 | 要求 PHP 8.3+ |
-| **HTTP 服务** | Workerman | ^5.1 | 常驻内存引擎 |
-| **备选模式** | PHP-FPM | - | 传统 CGI 模式 |
-| **依赖注入** | Symfony DI | ^7.3 | 容器与服务 |
-| **HTTP 组件** | Symfony HTTPFoundation | ^7.3 | Request/Response |
-| **路由组件** | Symfony Routing | ^7.3 | URL 匹配 |
-| **ORM (默认)** | Illuminate Database | ^12.0 | Laravel Eloquent ORM |
-| **ORM (备选)** | ThinkORM | ^4.0 | ThinkPHP ORM |
-| **权限控制** | Casbin | ^4.1 | RBAC 权限模型 |
-| **JWT 认证** | Lcobucci JWT | ^5.6 | JSON Web Token |
-| **模板引擎** | Twig | ^3.14 | 视图渲染 |
-| **缓存** | ThinkCache + Redis | ^3.0 | PSR-16 缓存 |
-| **会话** | Redis Group Session | - | 分布式 Session |
-| **图像处理** | Intervention Image | ^3.11 | 图片处理 |
+| **进程模型** | PHP-FPM | - | `public/index.php`，传统 CGI |
+| **进程模型** | Workerman | ^5.2 | `php server.php start` |
+| **进程模型** | Swoole | 6.x（swoole-cli） | `swoole-cli swoole.php start`，非 Composer 包 |
+| **HTTP Kernel** | Symfony HttpFoundation / HttpKernel / Routing | ^7.4 | Request/Response、内核、路由 |
+| **依赖注入** | Symfony DependencyInjection | ^7.4 | 容器与服务 |
+| **配置 / 缓存 / 环境** | Symfony Config / Cache / Dotenv / Finder / Translation / ExpressionLanguage | ^7.4 | 配置编译、缓存、`.env`、文件扫描、表达式 |
+| **ORM (默认)** | illuminate/database + config/events/pagination | ^12.58 | Laravel Eloquent |
+| **ORM (备选)** | topthink/think-orm | ^4.0.51 | ThinkPHP ORM |
+| **验证 / 模板** | think-validate / think-template / think-cache | ^3.0 | 校验、模板、PSR-16 缓存 |
+| **视图** | Twig | ^3.14 | 视图渲染 |
+| **权限控制** | Casbin | ^4.2 | RBAC 权限模型 |
+| **JWT 认证** | lcobucci/jwt + lcobucci/clock | ^5.6 / ^3.5 | JSON Web Token |
+| **HTTP 客户端** | Guzzle | ^7.10 | 出站 HTTP |
+| **Redis** | Predis | ^3.3 | Redis 客户端（缓存 / Session / 队列） |
+| **XSS 过滤** | ezyang/htmlpurifier | ^4.18 | HTML 净化 |
+| **加密** | phpseclib | ^3.0 | 非对称/对称算法 |
+| **图像处理** | Intervention Image | ^4.0 | 图片处理 |
 | **Markdown** | League Commonmark | ^2.6 | Markdown 解析 |
 | **日志** | Monolog | ^3.9 | 结构化日志 |
-| **队列** | Redis | - | 消息订阅 |
+| **环境变量** | vlucas/phpdotenv | ^5.6 | `.env` 加载 |
 | **UUID** | Ramsey UUID | ^4.9 | 唯一标识 |
+| **PSR** | psr/container, event-dispatcher, log, simple-cache | ^2 / ^1 / ^3 / ^3 | 标准接口 |
+| **内部组件** | xuey490/config, database, log, storage | ^1.0–^1.1 | 配置 / 数据库 / 日志 / 存储封装 |
+| **开发工具** | PHPStan ^2.2、PHP-CS-Fixer ^3.88、PHPUnit、composer-unused | require-dev | 静态分析、格式化、测试 |
 
 ### 前端技术栈
 
@@ -178,6 +204,7 @@
 | Redis | >= 6.0 |
 | Node.js | >= 20.19 (前端开发) |
 | pnpm | >= 8.8 (前端包管理) |
+| swoole-cli | 6.x（可选，仅 Swoole 模式需要；与系统 PHP 独立） |
 | Extensions | redis, pdo_mysql, mbstring, json, openssl, gd, fileinfo |
 
 ### 后端安装步骤
@@ -222,11 +249,25 @@ mysql -u root -p fssoa < database/fssoa.sql
 chmod -R 755 storage/
 chmod -R 777 storage/logs/ storage/cache/
 
-# 7. 启动服务 (Workerman 模式)
-php server.php start
+# 7. 启动服务（三选一，勿同时占用 8000/1234）
 
-# 或使用传统 FPM 模式 (需配合 Nginx/Apache)
-# php -S localhost:8000 -t public
+# Workerman 常驻内存
+php server.php start
+php server.php start -d    # 守护进程
+php server.php stop
+php server.php reload
+php server.php status
+
+# Swoole 多进程（需 swoole-cli，不要用系统 php 跑 swoole.php）
+swoole-cli swoole.php start
+swoole-cli swoole.php start -d
+swoole-cli swoole.php stop
+swoole-cli swoole.php reload   # 仅重载 HTTP Worker
+swoole-cli swoole.php status
+
+# 传统 FPM / 内置服务器
+php -S localhost:8000 -t public
+# 生产环境用 Nginx/Apache + php-fpm，文档根目录指向 public/
 ```
 
 ### 前端安装步骤
@@ -265,16 +306,23 @@ start.bat
 ### 生产环境部署
 
 ```bash
-# 1. 使用 Supervisor 管理 Workerman 进程
-[supervisorctl]
-program=novaphp
+# Workerman（Supervisor）
+[program:novaphp-workerman]
 command=php server.php start
 directory=/path/to/novaphp
 autostart=true
 autorestart=true
 user=www-data
 
-# 2. Nginx 反向代理 (FPM 模式)
+# Swoole（Supervisor；二进制用 swoole-cli）
+[program:novaphp-swoole]
+command=swoole-cli swoole.php start
+directory=/path/to/novaphp
+autostart=true
+autorestart=true
+user=www-data
+
+# Nginx 反向代理 (FPM 模式)
 server {
     listen 80;
     server_name yourdomain.com;
@@ -291,6 +339,9 @@ server {
         include fastcgi_params;
     }
 }
+
+# Nginx 反代常驻进程（Workerman / Swoole 已监听 8000 时）
+# proxy_pass http://127.0.0.1:8000;
 ```
 
 ## 演示图片
@@ -745,7 +796,9 @@ NovaPHP0.0.9/
 ├── storage/                  # 运行时文件 (日志/缓存)
 ├── tests/                    # 测试用例 (232个文件)
 ├── vendor/                   # Composer 依赖
+├── public/index.php          # PHP-FPM / 内置服务器入口
 ├── server.php                # Workerman 启动入口
+├── swoole.php                # Swoole 启动入口（swoole-cli）
 ├── composer.json             # PHP 依赖配置
 └── LICENSE                   # MIT 许可证
 ```
@@ -760,8 +813,12 @@ NovaPHP0.0.9/
 |------|-----------|--------|
 | [Symfony Components](https://symfony.com/) | Symfony Community | MIT |
 | [Workerman](https://www.workerman.net/) | walkor | MIT |
+| [Swoole](https://www.swoole.com/) | Swoole Group | Apache 2.0 |
 | [Laravel Framework](https://laravel.com/) | Taylor Otwell | MIT |
 | [ThinkPHP](https://www.thinkphp.cn/) | liu21st | Apache 2.0 |
+| [Guzzle](https://docs.guzzlephp.org/) | Guzzle Contributors | MIT |
+| [Predis](https://github.com/predis/predis) | Predis | MIT |
+| [HTMLPurifier](https://htmlpurifier.org/) | Edward Z. Yang | LGPL |
 | [Vue.js](https://vuejs.org/) | Evan You | MIT |
 | [Element Plus](https://element-plus.org/) | Element Plus Team | MIT |
 | [Casbin](https://casbin.org/) | Tech Lead | Apache 2.0 |
