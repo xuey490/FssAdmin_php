@@ -40,13 +40,13 @@ return [
 			*/
 			
 			
-            // Redis Watcher 配置
+            // Redis Watcher 配置（与 .env REDIS_* 对齐）
             'redis_watcher' => [
                 'enable' => true,
-                'host' => '127.0.0.1',
-                'port' => 6379,
-                'password' => '',
-                'database' => 0,
+                'host' => env('REDIS_HOST', '127.0.0.1'),
+                'port' => (int) env('REDIS_PORT', 6379),
+                'password' => env('REDIS_PASSWORD') ?: '',
+                'database' => (int) env('REDIS_DB', 0),
                 'channel' => '/casbin',
                 'timeout' => 5.0,
             ],
