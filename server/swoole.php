@@ -389,10 +389,11 @@ function try_send_static_file(SwooleRequest $req, SwooleResponse $res): bool
         return false;
     }
 
+    $mapped = str_starts_with($pathInfo, '/api/uploads') ? substr($pathInfo, 4) : $pathInfo;
     $staticDirs = ['/uploads', '/assets', '/css', '/js', '/images', '/favicon.ico'];
     $isStaticFile = false;
     foreach ($staticDirs as $dir) {
-        if (str_starts_with($pathInfo, $dir)) {
+        if (str_starts_with($mapped, $dir)) {
             $isStaticFile = true;
             break;
         }
@@ -401,7 +402,7 @@ function try_send_static_file(SwooleRequest $req, SwooleResponse $res): bool
         return false;
     }
 
-    $filePath = __DIR__ . '/public' . $pathInfo;
+    $filePath = __DIR__ . '/public' . $mapped;
     $realPath = realpath($filePath);
     $publicDir = realpath(__DIR__ . '/public');
     if ($realPath === false || $publicDir === false || !str_starts_with($realPath, $publicDir) || !is_file($realPath)) {

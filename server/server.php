@@ -63,7 +63,13 @@ require_once __DIR__ . '/vendor/autoload.php';
 
 // 设置日志文件
 Worker::$logFile = LOG_DIR . '/workerman.log';
-
+if (DIRECTORY_SEPARATOR === '\\') {
+    Worker::$logFileMaxSize = 0;
+    $staleTmp = LOG_DIR . '/workerman.log.tmp';
+    if (is_file($staleTmp)) {
+        @unlink($staleTmp);
+    }
+}
 // ----------------------------------------------------------------------
 // 日志工具
 // ----------------------------------------------------------------------
@@ -231,6 +237,25 @@ function convert_to_symfony_request(WorkermanRequest $request): SymfonyRequest
         $server,
         $rawBody
     );
+}
+
+/**
+ * 浏览器路径 → public 下的候选文件。/api/uploads 去掉 /api 后落到 public/uploads。
+ */
+function resolve_public_file_path(string $pathInfo): ?string
+{
+    if ($pathInfo === '') {
+        return null;
+    }
+    $mapped = str_starts_with($pathInfo, '/api/uploads') ? substr($pathInfo, 4) : $pathInfo;
+    $staticDirs = ['/uploads', '/assets', '/css', '/js', '/images', '/favicon.ico'];
+    foreach ($staticDirs as $dir) {
+        if (str_starts_with($mapped, $dir)) {
+            return __DIR__ . '/public' . $mapped;
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -637,23 +662,13 @@ $httpWorker->onMessage = function(TcpConnection $connection, WorkermanRequest $r
         // ==================== 静态文件处理 ====================
         $uri = $req->uri();
         $pathInfo = parse_url($uri, PHP_URL_PATH);
-        
-        $staticDirs = ['/uploads', '/assets', '/css', '/js', '/images', '/favicon.ico'];
-        $isStaticFile = false;
-        
-        foreach ($staticDirs as $dir) {
-            if (strpos($pathInfo, $dir) === 0) {
-                $isStaticFile = true;
-                break;
-            }
-        }
-        
-        if ($isStaticFile) {
-            $filePath = __DIR__ . '/public' . $pathInfo;
+        $filePath = is_string($pathInfo) ? resolve_public_file_path($pathInfo) : null;
+
+        if ($filePath !== null) {
             $realPath = realpath($filePath);
             $publicDir = realpath(__DIR__ . '/public');
             
-            if ($realPath && strpos($realPath, $publicDir) === 0 && is_file($realPath)) {
+            if ($realPath && $publicDir && strpos($realPath, $publicDir) === 0 && is_file($realPath)) {
                 $contentType = get_mime_type($realPath);
                 $fileContent = file_get_contents($realPath);
                 
