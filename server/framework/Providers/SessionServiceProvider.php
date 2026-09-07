@@ -41,11 +41,12 @@ final class SessionServiceProvider implements ServiceProviderInterface
         $services = $configurator->services();
 
 		$cacheFile = BASE_PATH . '/storage/cache/config_cache.php';
-		$cache = new \Framework\Config\Cache\ConfigCache($cacheFile, 300);
+		$cache = new \Framework\Config\Cache\EnvAwareConfigCache($cacheFile, 300);
 		$load = new \Framework\Config\ConfigService( BASE_PATH . '/config', $cache, null , ['routes.php', 'services.php']);
 
         // === 1. 加载配置 ===
-        $redisConfig   = $load->get('redis');  // require \dirname(__DIR__, 2) . '/config/redis.php';
+        // redis 连接以 .env 为准，不走可能冻住 REDIS_DB=0 的 config_cache
+        $redisConfig   = require BASE_PATH . '/config/redis.php';
         $sessionConfig = $load->get('session'); // require \dirname(__DIR__, 2) . '/config/session.php';
 
         $storageType     = $sessionConfig['storage_type']          ?? 'file';

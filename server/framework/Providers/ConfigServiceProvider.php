@@ -17,7 +17,7 @@ declare(strict_types=1);
 namespace Framework\Providers;
 
 use Framework\Config\ConfigService;
-use Framework\Config\Cache\ConfigCache;
+use Framework\Config\Cache\EnvAwareConfigCache;
 use Framework\Container\ServiceProviderInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
@@ -33,7 +33,7 @@ final class ConfigServiceProvider implements ServiceProviderInterface
 		
 		$config_cache = '%kernel.project_dir%/storage/cache/config_cache.php';
 		// 注册 config_cache 服务
-        $services->set('config_cache', ConfigCache::class)
+        $services->set('config_cache', EnvAwareConfigCache::class)
             ->args([
                 $config_cache ,
 				300

@@ -75,6 +75,8 @@ class RedisFactory
     {
         if (! self::$redis instanceof \Redis || ! self::$redis->isConnected()) {
             self::connect();
+        } else {
+            self::ensureSelectedDb(self::$redis);
         }
         return self::$redis;
     }
@@ -247,10 +249,14 @@ class RedisFactory
     private static function connect(): void
     {
         foreach (self::$configList as $config) {
+            if (! is_array($config)) {
+                continue;
+            }
+            $config = self::applyEnvOverrides($config);
             try {
                 $redis = new \Redis();
                 $ok    = $redis->connect(
-                    $config['host'],
+                    (string) $config['host'],
                     (int) ($config['port'] ?? 6379),
                     (float) ($config['timeout'] ?? 2.0)
                 );
@@ -260,9 +266,7 @@ class RedisFactory
                 if (! empty($config['password'])) {
                     $redis->auth($config['password']);
                 }
-                if (isset($config['database'])) {
-                    $redis->select((int) $config['database']);
-                }
+                $redis->select((int) ($config['database'] ?? 0));
                 $redis->ping(); // 验证连接
                 self::$redis = $redis;
                 return;
@@ -271,6 +275,57 @@ class RedisFactory
             }
         }
         throw new \RuntimeException('No Redis node available.');
+    }
+
+    /**
+     * 以 .env REDIS_* 覆盖节点参数，避免 config_cache 冻住旧的 database=0。
+     *
+     * @param array<mixed> $config
+     * @return array<mixed>
+     */
+    private static function applyEnvOverrides(array $config): array
+    {
+        if (! function_exists('env')) {
+            return $config;
+        }
+        $host = env('REDIS_HOST');
+        if (is_string($host) && $host !== '') {
+            $config['host'] = $host;
+        }
+        $port = env('REDIS_PORT');
+        if ($port !== null && $port !== false && $port !== '') {
+            $config['port'] = (int) $port;
+        }
+        $password = env('REDIS_PASSWORD');
+        if ($password !== null && $password !== false) {
+            $config['password'] = $password === '' ? null : $password;
+        }
+        $database = env('REDIS_DB');
+        if ($database !== null && $database !== false && $database !== '') {
+            $config['database'] = (int) $database;
+        }
+        return $config;
+    }
+
+    private static function ensureSelectedDb(\Redis $redis): void
+    {
+        $db = self::resolvedDatabase();
+        if ((int) $redis->getDbNum() === $db) {
+            return;
+        }
+        $redis->select($db);
+    }
+
+    private static function resolvedDatabase(): int
+    {
+        if (function_exists('env')) {
+            $db = env('REDIS_DB');
+            if ($db !== null && $db !== false && $db !== '') {
+                return (int) $db;
+            }
+        }
+        $first = self::$configList[0] ?? [];
+        return is_array($first) ? (int) ($first['database'] ?? 0) : 0;
     }
 
     /**
@@ -285,6 +340,8 @@ class RedisFactory
             try {
                 if (! self::$redis || ! self::$redis->isConnected()) {
                     self::connect();
+                } else {
+                    self::ensureSelectedDb(self::$redis);
                 }
                 return $fn(self::$redis);
             } catch (\Throwable $e) {
