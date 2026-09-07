@@ -16,12 +16,14 @@ return [
         'redis' => [
             'driver' => 'redis',
 			'type'   => 'Redis', //兼容thinkcache
-			'host'       => '127.0.0.1',
-			'port'	 	=> 6379,
-            'password'  => null,
+			'host'       => env('REDIS_HOST', '127.0.0.1'),
+			'port'	 	=> (int) env('REDIS_PORT', 6379),
+            'password'  => env('REDIS_PASSWORD') ?: '',
 			'expire'	=>3600,
 
-            'database' => 0,
+            // database: Symfony CacheFactory DSN；select: think-cache phpredis（只认 select，缺了会落到 db0）
+            'database' => (int) env('REDIS_DB', 0),
+            'select'   => (int) env('REDIS_DB', 0),
             'prefix' => 'redis_cache_',           // Redis 缓存前缀
             'enable_tags' => true,
         ],

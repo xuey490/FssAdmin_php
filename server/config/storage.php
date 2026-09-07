@@ -23,8 +23,8 @@ return [
 		'adapter' => \Framework\Storage\Adapter\LocalAdapter::class,
 		'root' => BASE_PATH.'/public/uploads/',
 		'dirname' => date('Y-m-d'),
-		'domain' => 'http://localhost:8000',
-		'uri' => '/uploads', // 如果 domain + uri 不在 public 目录下，请做好软链接，否则生成的url无法访问
+		'domain' => env('APP_URL', 'http://localhost:8000'),
+		'uri' => '/api/uploads',
 		'algo' => 'sha1',
 	],
 	// 阿里云对象存储

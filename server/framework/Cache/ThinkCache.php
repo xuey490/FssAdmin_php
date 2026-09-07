@@ -86,7 +86,8 @@ class ThinkCache
      */
     public function __construct(array $config = [])
     {
-        $this->config =$config;
+        $this->syncRedisSelect($config);
+        $this->config = $config;
         Cache::config($config);
     }
 
@@ -133,5 +134,23 @@ class ThinkCache
             $cache = Cache::store($store); // $cache->store($store);
         }
         return new ThinkAdapter($cache);
+    }
+
+    /**
+     * think-cache phpredis 用 select 选库，忽略 database；与 Symfony CacheFactory 的 database 对齐。
+     *
+     * @param array<mixed> $config
+     */
+    private function syncRedisSelect(array &$config): void
+    {
+        foreach ($config['stores'] ?? [] as &$store) {
+            if (($store['driver'] ?? '') !== 'redis') {
+                continue;
+            }
+            if (! isset($store['select']) && isset($store['database'])) {
+                $store['select'] = (int) $store['database'];
+            }
+        }
+        unset($store);
     }
 }
