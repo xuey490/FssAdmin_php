@@ -239,19 +239,13 @@ class AttributeRouteLoader
             // 解析方法级文档注释
             $doc_block_data = $this->parse_doc_block_annotations($method->getDocComment() ?: null);
             
-            // 解析路由定义（显式注解 > 自动生成）
-            $route_def = $this->parse_method_route_definition($method, $ref_class, $doc_block_data);
-            
-            // 如果没有路由定义（无 #[Route] 注解），跳过该方法
-            if ($route_def === null) {
-                continue;
+            // 解析路由定义（显式注解 > 自动生成）；同一方法可挂多条 #[Route]
+            $route_defs = $this->parse_method_route_definitions($method, $doc_block_data);
+
+            foreach ($route_defs as $route_def) {
+                $final_data = $this->merge_final_route_data($class_data, $route_def, $doc_block_data, $collected_method_data, $ref_class, $method);
+                $this->create_and_add_route($final_data, $route_collection);
             }
-            
-            // 合并所有配置
-            $final_data = $this->merge_final_route_data($class_data, $route_def, $doc_block_data, $collected_method_data, $ref_class, $method);
-            
-            // 验证并创建路由
-            $this->create_and_add_route($final_data, $route_collection);
         }
     }
 
@@ -303,22 +297,22 @@ class AttributeRouteLoader
      * 解析方法级路由定义（显式注解或自动生成）
      *
      * @param ReflectionMethod $method
-     * @param \ReflectionClass<object> $ref_class
      * @param array<mixed> $doc_block_data
-     * @return object
+     * @return list<object>
      */
-    private function parse_method_route_definition(ReflectionMethod $method, ReflectionClass $ref_class, array $doc_block_data): ?object
+    private function parse_method_route_definitions(ReflectionMethod $method, array $doc_block_data): array
     {
-        // 查找显式路由注解
+        $defs = [];
         foreach ($method->getAttributes() as $attr) {
             $inst = $attr->newInstance();
-            
+
             if ($inst instanceof Route) {
-                return $inst;
+                $defs[] = $inst;
+                continue;
             }
-            
+
             if ($inst instanceof BaseMapping) {
-                return (object)[
+                $defs[] = (object) [
                     'path' => $inst->path,
                     'methods' => $inst->methods,
                     'middleware' => $inst->middleware,
@@ -329,14 +323,18 @@ class AttributeRouteLoader
                     'group' => null,
                     'auth' => $inst->auth ?? null,
                     'roles' => $inst->roles,
-                    'requirements' => []
+                    'requirements' => [],
                 ];
             }
         }
 
+        if ($defs !== []) {
+            return $defs;
+        }
+
         // 没有显式路由注解，但 docblock 有 @path 时生成路由（兼容旧写法）
         if (isset($doc_block_data['path'])) {
-            return (object)[
+            return [(object) [
                 'path' => $doc_block_data['path'],
                 'methods' => $doc_block_data['methods'] ?? [self::DEFAULT_HTTP_METHOD],
                 'middleware' => [],
@@ -347,12 +345,11 @@ class AttributeRouteLoader
                 'group' => $doc_block_data['group'] ?? null,
                 'auth' => $doc_block_data['auth'] ?? null,
                 'roles' => $doc_block_data['roles'] ?? [],
-                'requirements' => []
-            ];
+                'requirements' => [],
+            ]];
         }
 
-        // 没有路由定义，不自动生成路由
-        return null;
+        return [];
     }
 
     /**
