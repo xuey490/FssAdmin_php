@@ -37,6 +37,8 @@ return [
             '/api/core/refresh',
             '/api/core/switch-tenant',
             '/api/core/captcha*',
+            '/api/schoole/teacher/login',
+            '/api/schoole/teacher/tenants',
             '/webhook/*',
             '/payment/notify',
         ],

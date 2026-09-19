@@ -17,11 +17,11 @@ declare(strict_types=1);
  *
  * Services:
  *   - HTTP:       http://0.0.0.0:8000
- *   - WebSocket:  ws://0.0.0.0:1234 （HTTP 同进程 addListener，禁止再 new 第二个 Server）
+ *   - WebSocket:  ws://0.0.0.0:12341 （HTTP 同进程 addListener，禁止再 new 第二个 Server）
  *   - Queue:      Redis LIST 消费进程（含 MySQL 连接池）
  *
  * reload 换 HTTP Worker，同进程 WS 连接会断；队列自定义进程仍要 restart。
- * 不要与 php server.php start 同时占用 8000/1234。
+ * 不要与 php server.php start 同时占用 8000/12341。
  *
  * Monitor：每 10s 一行内存（f=已加载文件 n=请求数）；超 256MB SIGUSR1；
  * 轮询 app/config/framework 热更新。GET /_health 看各 Worker 快照。
@@ -39,6 +39,9 @@ use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Framework\Core\Framework;
+use Framework\Http\ClientDisconnected;
+use Framework\Http\SseEmitter;
+use Framework\Http\SseResponse;
 use Framework\Schema\SchemaWarmup;
 use Framework\Schema\SchemaRegistry;
 use Framework\Utils\WorkermanHealth;
@@ -73,7 +76,7 @@ const MEMORY_CHECK_INTERVAL_MS = 10000;
 const HTTP_HOST = '0.0.0.0';
 const HTTP_PORT = 8000;
 const WS_HOST = '0.0.0.0';
-const WS_PORT = 1234;
+const WS_PORT = 12341;
 const HTTP_WORKER_NUM = 4;
 const PACKAGE_MAX_LENGTH = 64 * 1024 * 1024;
 const FILE_WATCH_INTERVAL_MS = 2000;
@@ -364,6 +367,11 @@ function make_uploaded_file(array $fileInfo): ?UploadedFile
 
 function send_symfony_response(SwooleResponse $swooleRes, SymfonyResponse $res): void
 {
+    if ($res instanceof SseResponse) {
+        send_sse_response($swooleRes, $res);
+        return;
+    }
+
     $swooleRes->status($res->getStatusCode());
     foreach ($res->headers->allPreserveCase() as $name => $values) {
         $headerName = (string) $name;
@@ -379,6 +387,49 @@ function send_symfony_response(SwooleResponse $swooleRes, SymfonyResponse $res):
         $swooleRes->header($headerName, is_array($values) ? implode(', ', $values) : (string) $values);
     }
     $swooleRes->end($res->getContent() ?: '');
+}
+
+function send_sse_response(SwooleResponse $swooleRes, SseResponse $res): void
+{
+    $swooleRes->status($res->getStatusCode());
+    foreach ($res->headers->allPreserveCase() as $name => $values) {
+        $headerName = (string) $name;
+        if (strtolower($headerName) === 'content-length' || strtolower($headerName) === 'set-cookie') {
+            continue;
+        }
+        $swooleRes->header($headerName, is_array($values) ? implode(', ', $values) : (string) $values);
+    }
+    $swooleRes->header('Content-Type', 'text/event-stream');
+    $swooleRes->header('Cache-Control', 'no-cache');
+    $swooleRes->header('X-Accel-Buffering', 'no');
+
+    try {
+        $res->emit(new class ($swooleRes) implements SseEmitter {
+            public function __construct(private SwooleResponse $res)
+            {
+            }
+
+            public function event(string $name, array $data): void
+            {
+                if (method_exists($this->res, 'isWritable') && !$this->res->isWritable()) {
+                    throw new ClientDisconnected('SSE client disconnected');
+                }
+                $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
+                if ($payload === false) {
+                    $payload = '{}';
+                }
+                $ok = $this->res->write("event: {$name}\ndata: {$payload}\n\n");
+                if ($ok === false) {
+                    throw new ClientDisconnected('SSE client disconnected');
+                }
+            }
+        });
+    } catch (ClientDisconnected) {
+    }
+
+    if (!method_exists($swooleRes, 'isWritable') || $swooleRes->isWritable()) {
+        $swooleRes->end();
+    }
 }
 
 function try_send_static_file(SwooleRequest $req, SwooleResponse $res): bool

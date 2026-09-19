@@ -277,7 +277,7 @@ class PluginMarketService
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
 
-        curl_close($ch);
+        unset($ch);
 
         if ($error) {
             throw new RuntimeException("HTTP 请求失败: {$error}");
@@ -325,7 +325,7 @@ class PluginMarketService
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
 
-        curl_close($ch);
+        unset($ch);
         fclose($fp);
 
         if ($error) {

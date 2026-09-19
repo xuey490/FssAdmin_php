@@ -16,8 +16,11 @@ declare(strict_types=1);
  *   php server.php connections    - Show connections
  *
  * Services:
- *   - HTTP Server: http://0.0.0.0:8000
+ *   - HTTP Server: http://0.0.0.0:8000（普通 /api/）
+ *   - AI HTTP Server: http://0.0.0.0:8001（仅 /api/ai/；Linux 随本文件启动）
  *   - WebSocket Server: ws://0.0.0.0:1234 (or wss:// with SSL)
+ *   - Windows 请另开：php server-ai.php start
+ *   - 反代分流见 docs/deploy/ai-http-split.md
  */
 
 use Workerman\Worker;
@@ -29,6 +32,9 @@ use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Framework\Core\Framework;
+use Framework\Http\ClientDisconnected;
+use Framework\Http\SseEmitter;
+use Framework\Http\SseResponse;
 use Framework\Schema\SchemaWarmup;
 use Framework\Schema\SchemaRegistry;
 use Framework\Utils\WorkermanHealth;
@@ -38,6 +44,7 @@ use Framework\Pool\PoolManager;
 use Framework\Queue\RedisConsumerService;
 use App\Queue\Handlers\DefaultMessageHandler;
 use App\Queue\Handlers\ArticleMessageHandler;
+use Workerman\Protocols\Http\ServerSentEvents;
 
 // 只允许 CLI 模式运行
 if (php_sapi_name() !== 'cli') {
@@ -58,6 +65,10 @@ if (!is_dir(LOG_DIR)) {
 
 const MEMORY_LIMIT_MB = 256;
 const MEMORY_CHECK_INTERVAL = 10;
+const HTTP_LISTEN_PORT = 8000;
+const AI_LISTEN_PORT = 8001;
+const HTTP_WORKER_COUNT = 4;
+const AI_WORKER_COUNT = 4;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
@@ -76,6 +87,36 @@ if (DIRECTORY_SEPARATOR === '\\') {
 function log_info(string $msg): void {
     $line = '[' . date('Y-m-d H:i:s') . '] ' . $msg . PHP_EOL;
     file_put_contents(LOG_DIR . '/server.log', $line, FILE_APPEND);
+}
+
+function workerman_env_int(string $key, int $default): int
+{
+    $value = getenv($key);
+    if ($value === false || $value === '') {
+        return $default;
+    }
+
+    return (int) $value;
+}
+
+function is_ai_http_path(string $path): bool
+{
+    return $path === '/api/ai' || str_starts_with($path, '/api/ai/');
+}
+
+/**
+ * @param array<string, mixed>|null $data
+ */
+function send_workerman_json(TcpConnection $connection, int $status, string $msg, ?array $data = null): void
+{
+    $connection->send(new WorkermanResponse($status, [
+        'Content-Type' => 'application/json; charset=utf-8',
+    ], (string) json_encode([
+        'code' => $status,
+        'msg' => $msg,
+        'message' => $msg,
+        'data' => $data,
+    ], JSON_UNESCAPED_UNICODE)));
 }
 
 function ws_log(string $msg): void {
@@ -129,6 +170,64 @@ function convert_to_workerman_response(SymfonyResponse $res): WorkermanResponse 
     }
 
     return new WorkermanResponse($res->getStatusCode(), $headers, $content);
+}
+
+function send_sse_response(TcpConnection $connection, SseResponse $res): void
+{
+    $headers = [
+        'Content-Type' => 'text/event-stream',
+        'Cache-Control' => 'no-cache',
+        'X-Accel-Buffering' => 'no',
+        'Connection' => 'keep-alive',
+    ];
+    foreach ($res->headers->allPreserveCase() as $name => $values) {
+        $headerName = (string) $name;
+        $lower = strtolower($headerName);
+        if ($lower === 'content-length' || $lower === 'content-type' || $lower === 'set-cookie') {
+            continue;
+        }
+        $headers[$headerName] = is_array($values) ? implode(', ', $values) : (string) $values;
+    }
+
+    $connection->send(new WorkermanResponse(200, $headers, ''));
+
+    $aborted = false;
+    $previousClose = $connection->onClose;
+    $connection->onClose = function (TcpConnection $conn) use (&$aborted, $previousClose): void {
+        $aborted = true;
+        if (is_callable($previousClose)) {
+            $previousClose($conn);
+        }
+    };
+
+    try {
+        $res->emit(new class ($connection, $aborted) implements SseEmitter {
+            public function __construct(private TcpConnection $connection, private bool &$aborted)
+            {
+            }
+
+            public function event(string $name, array $data): void
+            {
+                if ($this->aborted || $this->connection->getStatus() !== TcpConnection::STATUS_ESTABLISHED) {
+                    throw new ClientDisconnected('SSE client disconnected');
+                }
+                $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
+                if ($payload === false) {
+                    $payload = '{}';
+                }
+                $this->connection->send(new ServerSentEvents([
+                    'event' => $name,
+                    'data' => $payload,
+                ]));
+            }
+        });
+    } catch (ClientDisconnected) {
+    }
+
+    $connection->onClose = $previousClose;
+    if ($connection->getStatus() === TcpConnection::STATUS_ESTABLISHED) {
+        $connection->close();
+    }
 }
 
 /**
@@ -303,6 +402,242 @@ function get_mime_type(string $filePath): string
     
     $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
     return $mimeTypes[$extension] ?? 'application/octet-stream';
+}
+
+function boot_workerman_app_worker(Worker $worker, string $label): Framework
+{
+    log_info("[{$label}] PID " . getmypid() . " started");
+    Worker::log("[{$label}] PID " . getmypid() . " started");
+    update_health($worker);
+
+    $framework = Framework::getInstance();
+
+    if (defined('WORKERMAN_ENV')) {
+        SchemaWarmup::setScanPath(base_path('app/Models'), 'App\Models');
+        SchemaWarmup::ignore([
+            \App\Models\TempView::class,
+        ]);
+        SchemaWarmup::warmupAll();
+        SchemaRegistry::freeze();
+    }
+
+    try {
+        $redisConfig = require BASE_PATH . '/config/redis.php';
+        $databaseConfig = require BASE_PATH . '/config/database.php';
+
+        if (!empty($redisConfig['pool']['enabled'])) {
+            $primaryNode = $redisConfig['nodes'][0] ?? [];
+            $redisPoolConfig = array_merge($primaryNode, $redisConfig['pool']);
+            PoolManager::register('redis.default', new RedisPool($redisPoolConfig));
+            log_info(sprintf(
+                '[%s #%d] Redis 连接池已初始化，空闲：%d / 最大：%d',
+                $label,
+                $worker->id,
+                $redisPoolConfig['min_connections'] ?? 2,
+                $redisPoolConfig['max_connections'] ?? 10
+            ));
+        }
+
+        if (!empty($databaseConfig['pool']['enabled'])) {
+            $mysqlConn = $databaseConfig['connections']['mysql'] ?? [];
+            $mysqlPoolConfig = array_merge([
+                'host'     => $mysqlConn['hostname'] ?? '127.0.0.1',
+                'port'     => (int) ($mysqlConn['hostport'] ?? 3306),
+                'database' => $mysqlConn['database'] ?? 'fssoa',
+                'username' => $mysqlConn['username'] ?? 'root',
+                'password' => $mysqlConn['password'] ?? '',
+                'charset'  => $mysqlConn['charset']  ?? 'utf8mb4',
+            ], $databaseConfig['pool']);
+            PoolManager::register('mysql.default', new MysqlPool($mysqlPoolConfig));
+            log_info(sprintf(
+                '[%s #%d] MySQL 连接池已初始化，空闲：%d / 最大：%d',
+                $label,
+                $worker->id,
+                $mysqlPoolConfig['min_connections'] ?? 2,
+                $mysqlPoolConfig['max_connections'] ?? 10
+            ));
+        }
+    } catch (\Throwable $e) {
+        log_info("[{$label}] 连接池初始化失败（降级为直连）：" . $e->getMessage());
+    }
+
+    Timer::add(MEMORY_CHECK_INTERVAL, function () use ($worker, $label) {
+        update_health($worker);
+        rotate_logs();
+
+        $pid = getmypid();
+        $time = date('Y-m-d H:i:s');
+        $memoryReal = memory_get_usage(true) / 1048576;
+        $memoryEmalloc = memory_get_usage(false) / 1048576;
+        $includedFiles = count(get_included_files());
+        $classes = count(get_declared_classes());
+        $interfaces = count(get_declared_interfaces());
+        $traits = count(get_declared_traits());
+
+        Worker::log("[{$time}] [Memory] {$label} #{$worker->id} PID {$pid} "
+            . "real:{$memoryReal}MB emalloc:{$memoryEmalloc}MB "
+            . "files:{$includedFiles} classes:{$classes} "
+            . "interfaces:{$interfaces} traits:{$traits}");
+
+        $poolStats = PoolManager::stats();
+        if (!empty($poolStats)) {
+            $statStr = implode(' ', array_map(
+                fn ($n, $s) => "{$n}[idle:{$s['idle']} active:{$s['active']} max:{$s['max']}]",
+                array_keys($poolStats),
+                $poolStats
+            ));
+            Worker::log("[{$time}] [Pool] {$label} #{$worker->id} {$statStr}");
+        }
+
+        if ($memoryReal > MEMORY_LIMIT_MB) {
+            Worker::log("[{$time}] [Warning] {$label} #{$worker->id} PID {$pid} memory exceeded limit ({$memoryReal} MB > " . MEMORY_LIMIT_MB . " MB), stopping...");
+            $worker->stop();
+        }
+    });
+
+    return $framework;
+}
+
+function handle_workerman_http_request(
+    TcpConnection $connection,
+    WorkermanRequest $req,
+    ?Framework $framework,
+    string $role
+): void {
+    $symReq = null;
+    $symRes = null;
+    $path = $req->path();
+
+    try {
+        if ($role === 'ai') {
+            if ($path === '/_health') {
+                update_health();
+                $data = file_get_contents(HEALTH_FILE);
+                $connection->send(convert_to_workerman_response(
+                    new SymfonyResponse($data === false ? '{}' : $data, 200, ['Content-Type' => 'application/json'])
+                ));
+                return;
+            }
+            if (!is_ai_http_path($path)) {
+                send_workerman_json($connection, 404, 'AI worker 只处理 /api/ai/');
+                return;
+            }
+        }
+
+        if ($role === 'http' && is_ai_http_path($path) && workerman_env_int('WORKERMAN_HTTP_REJECT_AI', 0) === 1) {
+            send_workerman_json($connection, 503, 'AI 请求请走 AI 端口（默认 8001），见 docs/deploy/ai-http-split.md');
+            return;
+        }
+
+        if ($role !== 'ai') {
+            $uri = $req->uri();
+            $pathInfo = parse_url($uri, PHP_URL_PATH);
+            $filePath = is_string($pathInfo) ? resolve_public_file_path($pathInfo) : null;
+
+            if ($filePath !== null) {
+                $realPath = realpath($filePath);
+                $publicDir = realpath(__DIR__ . '/public');
+
+                if ($realPath && $publicDir && strpos($realPath, $publicDir) === 0 && is_file($realPath)) {
+                    $contentType = get_mime_type($realPath);
+                    $fileContent = file_get_contents($realPath);
+                    $headers = [
+                        'Content-Type' => $contentType,
+                        'Cache-Control' => 'public, max-age=86400',
+                    ];
+                    if (preg_match('/\.(jpg|jpeg|png|gif|webp|svg|ico)$/i', $realPath)) {
+                        $headers['Cache-Control'] = 'public, max-age=2592000';
+                    }
+                    $connection->send(new WorkermanResponse(200, $headers, $fileContent === false ? '' : $fileContent));
+                    return;
+                }
+
+                $connection->send(new WorkermanResponse(404, ['Content-Type' => 'text/plain'], 'File Not Found'));
+                return;
+            }
+
+            if ($path === '/_health') {
+                update_health();
+                $data = file_get_contents(HEALTH_FILE);
+                $connection->send(convert_to_workerman_response(
+                    new SymfonyResponse($data === false ? '{}' : $data, 200, ['Content-Type' => 'application/json'])
+                ));
+                return;
+            }
+
+            if ($path === '/_ws-stats') {
+                $wsManager = WebSocketManager::getInstance();
+                $stats = [
+                    'online_count' => $wsManager->getOnlineCount(),
+                    'rooms' => $wsManager->getAllRooms(),
+                    'time' => date('Y-m-d H:i:s'),
+                ];
+                $connection->send(convert_to_workerman_response(
+                    new SymfonyResponse((string) json_encode($stats), 200, ['Content-Type' => 'application/json'])
+                ));
+                return;
+            }
+        }
+
+        if (!$framework instanceof Framework) {
+            send_workerman_json($connection, 503, 'Worker not ready');
+            return;
+        }
+
+        $symReq = convert_to_symfony_request($req);
+        $symRes = $framework->handleRequest($symReq);
+
+        if ($symReq->hasSession()) {
+            $session = $symReq->getSession();
+            $session->save();
+            $session->clear();
+        }
+
+        app('cookie')->sendQueuedCookies($symRes);
+
+        if ($symRes instanceof SseResponse) {
+            send_sse_response($connection, $symRes);
+            return;
+        }
+
+        $connection->send(convert_to_workerman_response($symRes));
+    } catch (Throwable $e) {
+        $error = "[Error] {$e->getMessage()} in {$e->getFile()}:{$e->getLine()}";
+        log_info($error);
+        Worker::log($error);
+        $connection->send(new WorkermanResponse(500, [], "Internal Error: {$e->getMessage()}"));
+    } finally {
+        if (isset($symReq) && $symReq->hasSession()) {
+            $symReq->getSession()->clear();
+        }
+        unset($symReq, $symRes);
+        gc_collect_cycles();
+    }
+}
+
+function attach_workerman_ai_worker(?Framework &$framework): Worker
+{
+    $port = workerman_env_int('WORKERMAN_AI_PORT', AI_LISTEN_PORT);
+    $count = max(1, workerman_env_int('WORKERMAN_AI_COUNT', AI_WORKER_COUNT));
+    $aiWorker = new Worker('http://0.0.0.0:' . $port);
+    $aiWorker->name = 'FSSPHP-AI';
+    $aiWorker->count = $count;
+
+    $aiWorker->onWorkerStart = function (Worker $worker) use (&$framework): void {
+        $framework = boot_workerman_app_worker($worker, 'AI-Worker');
+    };
+    $aiWorker->onWorkerStop = function (Worker $worker): void {
+        log_info(sprintf('[AI-Worker #%d] 正在关闭连接池...', $worker->id));
+        PoolManager::closeAll();
+        log_info(sprintf('[AI-Worker #%d] 连接池已关闭', $worker->id));
+    };
+    $aiWorker->onMessage = function (TcpConnection $connection, WorkermanRequest $req) use (&$framework): void {
+        handle_workerman_http_request($connection, $req, $framework, 'ai');
+    };
+
+    log_info("[AI] listen http://0.0.0.0:{$port} count={$count} path=/api/ai/");
+
+    return $aiWorker;
 }
 
 // ----------------------------------------------------------------------
@@ -525,223 +860,34 @@ class WebSocketManager
 }
 
 // ----------------------------------------------------------------------
-// 创建 HTTP Worker
+// 创建 HTTP / AI Worker
 // ----------------------------------------------------------------------
-$httpWorker = new Worker('http://0.0.0.0:8000');
-$httpWorker->name = 'FSSPHP-HTTP';
-$httpWorker->count = 4;
-
-// 存储 Framework 实例
+$workermanAiOnly = defined('WORKERMAN_AI_ONLY') && WORKERMAN_AI_ONLY;
+$workermanWindows = DIRECTORY_SEPARATOR === '\\';
 $framework = null;
 
-// ----------------------------------------------------------------------
-// HTTP Worker 启动回调
-// ----------------------------------------------------------------------
-$httpWorker->onWorkerStart = function(Worker $worker) use (&$framework) {
-    log_info("[HTTP-Worker] PID " . getmypid() . " started");
-    Worker::log("[HTTP-Worker] PID " . getmypid() . " started");
-    update_health();
+if (!$workermanAiOnly) {
+$httpPort = workerman_env_int('WORKERMAN_HTTP_PORT', HTTP_LISTEN_PORT);
+$httpCount = max(1, workerman_env_int('WORKERMAN_HTTP_COUNT', HTTP_WORKER_COUNT));
+$httpWorker = new Worker('http://0.0.0.0:' . $httpPort);
+$httpWorker->name = 'FSSPHP-HTTP';
+$httpWorker->count = $httpCount;
 
-    // 初始化框架
-    $framework = Framework::getInstance();
-
-    // Schema 预热
-    if (defined('WORKERMAN_ENV')) {
-        SchemaWarmup::setScanPath(base_path('app/Models'), 'App\Models');
-        SchemaWarmup::ignore([
-            \App\Models\TempView::class,
-        ]);
-        SchemaWarmup::warmupAll();
-        SchemaRegistry::freeze();
-    }
-    
-    // ---------------------------------------------------------------
-    // 连接池初始化（每个 Worker 进程独立持有，不跨进程共享）
-    // ---------------------------------------------------------------
-    try {
-        $redisConfig   = require BASE_PATH . '/config/redis.php';
-        $databaseConfig = require BASE_PATH . '/config/database.php';
-
-        // --- Redis 连接池 ---
-        if (!empty($redisConfig['pool']['enabled'])) {
-            $primaryNode = $redisConfig['nodes'][0] ?? [];
-            $redisPoolConfig = array_merge($primaryNode, $redisConfig['pool']);
-            PoolManager::register('redis.default', new RedisPool($redisPoolConfig));
-            log_info(sprintf(
-                '[HTTP-Worker #%d] Redis 连接池已初始化，空闲：%d / 最大：%d',
-                $worker->id,
-                $redisPoolConfig['min_connections'] ?? 2,
-                $redisPoolConfig['max_connections'] ?? 10
-            ));
-        }
-
-        // --- MySQL 连接池 ---
-        if (!empty($databaseConfig['pool']['enabled'])) {
-            $mysqlConn      = $databaseConfig['connections']['mysql'] ?? [];
-            $mysqlPoolConfig = array_merge([
-                'host'     => $mysqlConn['hostname'] ?? '127.0.0.1',
-                'port'     => (int) ($mysqlConn['hostport'] ?? 3306),
-                'database' => $mysqlConn['database'] ?? 'fssoa',
-                'username' => $mysqlConn['username'] ?? 'root',
-                'password' => $mysqlConn['password'] ?? '',
-                'charset'  => $mysqlConn['charset']  ?? 'utf8mb4',
-            ], $databaseConfig['pool']);
-            PoolManager::register('mysql.default', new MysqlPool($mysqlPoolConfig));
-            log_info(sprintf(
-                '[HTTP-Worker #%d] MySQL 连接池已初始化，空闲：%d / 最大：%d',
-                $worker->id,
-                $mysqlPoolConfig['min_connections'] ?? 2,
-                $mysqlPoolConfig['max_connections'] ?? 10
-            ));
-        }
-    } catch (\Throwable $e) {
-        log_info('[HTTP-Worker] 连接池初始化失败（降级为直连）：' . $e->getMessage());
-    }
-
-    // 定时任务：内存监控、日志轮转、健康检查
-    Timer::add(MEMORY_CHECK_INTERVAL, function() use ($worker) {
-        update_health($worker);
-        rotate_logs();
-        
-        $pid = getmypid();
-        $time = date('Y-m-d H:i:s');
-        
-        $memoryReal  = memory_get_usage(true) / 1048576;
-        $memoryEmalloc = memory_get_usage(false) / 1048576;
-        $includedFiles = count(get_included_files());
-        $classes = count(get_declared_classes());
-        $interfaces = count(get_declared_interfaces());
-        $traits = count(get_declared_traits());
-        $objects = (function() {
-            $count = 0;
-            foreach (get_defined_vars() as $v) is_object($v) && $count++;
-            return $count;
-        })();
-        
-        Worker::log("[{$time}] [Memory] HTTP-Worker #{$worker->id} PID {$pid} "
-            . "real:{$memoryReal}MB emalloc:{$memoryEmalloc}MB "
-            . "files:{$includedFiles} classes:{$classes} "
-            . "interfaces:{$interfaces} traits:{$traits}");
-
-        // 连接池统计日志
-        $poolStats = PoolManager::stats();
-        if (!empty($poolStats)) {
-            $statStr = implode(' ', array_map(
-                fn($n, $s) => "{$n}[idle:{$s['idle']} active:{$s['active']} max:{$s['max']}]",
-                array_keys($poolStats),
-                $poolStats
-            ));
-            Worker::log("[{$time}] [Pool] HTTP-Worker #{$worker->id} {$statStr}");
-        }
-
-        // 内存超限则重启
-        if ($memoryReal > MEMORY_LIMIT_MB) {
-            Worker::log("[{$time}] [Warning] HTTP-Worker #{$worker->id} PID {$pid} memory exceeded limit ({$memoryReal} MB > " . MEMORY_LIMIT_MB . " MB), stopping...");
-            $worker->stop();
-        }
-    });
+$httpWorker->onWorkerStart = function (Worker $worker) use (&$framework): void {
+    $framework = boot_workerman_app_worker($worker, 'HTTP-Worker');
 };
 
-// ----------------------------------------------------------------------
-// HTTP Worker 停止回调（关闭连接池）
-// ----------------------------------------------------------------------
-$httpWorker->onWorkerStop = function(Worker $worker) {
+$httpWorker->onWorkerStop = function (Worker $worker): void {
     log_info(sprintf('[HTTP-Worker #%d] 正在关闭连接池...', $worker->id));
     PoolManager::closeAll();
     log_info(sprintf('[HTTP-Worker #%d] 连接池已关闭', $worker->id));
 };
 
-// ----------------------------------------------------------------------
-// HTTP 请求处理回调
-// ----------------------------------------------------------------------
-$httpWorker->onMessage = function(TcpConnection $connection, WorkermanRequest $req) use (&$framework) {
-    $symReq = null;
-    $symRes = null;
-    
-    try {
-        // ==================== 静态文件处理 ====================
-        $uri = $req->uri();
-        $pathInfo = parse_url($uri, PHP_URL_PATH);
-        $filePath = is_string($pathInfo) ? resolve_public_file_path($pathInfo) : null;
-
-        if ($filePath !== null) {
-            $realPath = realpath($filePath);
-            $publicDir = realpath(__DIR__ . '/public');
-            
-            if ($realPath && $publicDir && strpos($realPath, $publicDir) === 0 && is_file($realPath)) {
-                $contentType = get_mime_type($realPath);
-                $fileContent = file_get_contents($realPath);
-                
-                $headers = [
-                    'Content-Type' => $contentType,
-                    'Cache-Control' => 'public, max-age=86400',
-                ];
-                
-                if (preg_match('/\.(jpg|jpeg|png|gif|webp|svg|ico)$/i', $realPath)) {
-                    $headers['Cache-Control'] = 'public, max-age=2592000';
-                }
-                
-                $connection->send(new WorkermanResponse(200, $headers, $fileContent));
-                return;
-            }
-            
-            $connection->send(new WorkermanResponse(404, ['Content-Type' => 'text/plain'], 'File Not Found'));
-            return;
-        }
-        // ==================== 静态文件处理结束 ====================
-
-        // 健康检查端点
-        if ($req->path() === '/_health') {
-            update_health();
-            $data = file_get_contents(HEALTH_FILE);
-            $response = new SymfonyResponse($data, 200, ['Content-Type' => 'application/json']);
-            $connection->send(convert_to_workerman_response($response));
-            return;
-        }
-        
-        // WebSocket 统计信息端点
-        if ($req->path() === '/_ws-stats') {
-            $wsManager = WebSocketManager::getInstance();
-            $stats = [
-                'online_count' => $wsManager->getOnlineCount(),
-                'rooms' => $wsManager->getAllRooms(),
-                'time' => date('Y-m-d H:i:s')
-            ];
-            $response = new SymfonyResponse(json_encode($stats), 200, ['Content-Type' => 'application/json']);
-            $connection->send(convert_to_workerman_response($response));
-            return;
-        }
-
-        // 转换请求并处理
-        $symReq = convert_to_symfony_request($req);
-        $symRes = $framework->handleRequest($symReq);
-        
-        // 保存 Session 并清理内存，防止跨请求累积
-        if ($symReq->hasSession()) {
-            $session = $symReq->getSession();
-            $session->save();
-            $session->clear();
-        }
-        
-        // 发送队列中的 Cookie
-        app('cookie')->sendQueuedCookies($symRes);
-        
-        $connection->send(convert_to_workerman_response($symRes));
-
-    } catch (Throwable $e) {
-        $error = "[Error] {$e->getMessage()} in {$e->getFile()}:{$e->getLine()}";
-        log_info($error);
-        Worker::log($error);
-        $connection->send(new WorkermanResponse(500, [], "Internal Error: {$e->getMessage()}"));
-    } finally {
-        // 清理资源：Request/Response + Session 内存
-        if (isset($symReq) && $symReq->hasSession()) {
-            $symReq->getSession()->clear();
-        }
-        unset($symReq, $symRes);
-        gc_collect_cycles();
-    }
+$httpWorker->onMessage = function (TcpConnection $connection, WorkermanRequest $req) use (&$framework): void {
+    handle_workerman_http_request($connection, $req, $framework, 'http');
 };
+
+log_info("[HTTP] listen http://0.0.0.0:{$httpPort} count={$httpCount}");
 
 // ----------------------------------------------------------------------
 // 创建 WebSocket Worker (ws://0.0.0.0:1234)
@@ -1079,6 +1225,15 @@ if (!empty($redisConfigForQueue['queue']['enabled'])) {
     $queueWorker->onError = function (TcpConnection $connection, $code, $msg) {
         log_info(sprintf('[Queue-Worker] 错误：%d - %s', $code, $msg));
     };
+}
+} // !$workermanAiOnly（HTTP + WebSocket + Queue）
+
+if ($workermanAiOnly || !$workermanWindows) {
+    attach_workerman_ai_worker($framework);
+} else {
+    $msg = '[AI] Windows 单文件只能起一个 Worker，请另开：php server-ai.php start';
+    log_info($msg);
+    fwrite(STDOUT, $msg . PHP_EOL);
 }
 
 // ----------------------------------------------------------------------
