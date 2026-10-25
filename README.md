@@ -153,7 +153,7 @@
 | 进程模型 | Swoole | 6.x（swoole-cli） | `swoole-cli swoole.php start`，HTTP 8000 / WS 12341 |
 | HTTP / DI / 路由 | Symfony HttpFoundation / HttpKernel / Routing / DI | ^7.4 | 请求响应、内核、容器 |
 | 配置 / 缓存 / 环境 | Symfony Config / Cache / Dotenv / Finder / Translation | ^7.4 | 配置编译、`.env`、i18n |
-| ORM（默认） | illuminate/database 等 | ^12.58 | Laravel Eloquent |
+| ORM（默认） | illuminate/database 等 | 13.30.* | Laravel Eloquent |
 | ORM（备选） | topthink/think-orm | ^4.0.51 | ThinkPHP ORM |
 | 校验 / 模板 / 缓存 | think-validate / think-template / think-cache | ^3.0 | 校验、模板、PSR-16 |
 | 视图 | Twig | ^3.14 | 服务端渲染 |

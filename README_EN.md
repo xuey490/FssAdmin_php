@@ -129,7 +129,7 @@
 | **Dependency Injection** | Symfony DI | ^7.3 | Container & Services |
 | **HTTP Component** | Symfony HTTPFoundation | ^7.3 | Request/Response |
 | **Routing Component** | Symfony Routing | ^7.3 | URL matching |
-| **ORM (Default)** | Illuminate Database | ^12.0 | Laravel Eloquent ORM |
+| **ORM (Default)** | Illuminate Database | 13.30.* | Laravel Eloquent ORM |
 | **ORM (Alternative)** | ThinkORM | ^4.0 | ThinkPHP ORM |
 | **Permission Control** | Casbin | ^4.1 | RBAC permission model |
 | **JWT Authentication** | Lcobucci JWT | ^5.6 | JSON Web Token |
