@@ -552,7 +552,7 @@ server {
 2. **搜 / 提 Issue**：https://github.com/xuey490/FssAdmin_php/issues ，附 PHP / Node 版本、启动方式（FPM / Workerman / Swoole）、完整报错与复现步骤  
 3. **群内提问**：QQ 群发截图与 `.env` 中已打码的关键配置（不要发数据库密码、JWT 密钥）  
 4. **邮件**：xuey863toy@gmail.com ，主题建议带 `[FssAdmin]`  
-5. **商业 / 源码咨询**：赞助超过 ¥200 可加微信 `xdbyvibm6` 沟通全套源码与定制（详见演示站赞助页）
+5. **商业 / 源码咨询**：可加微信 `xdbyvibm6` 沟通全套源码与定制（详见演示站赞助页）
 
 社区支援为自愿互助，不承诺 SLA。生产故障请在邮件或 Issue 中标明「生产」并提供日志片段。
 
