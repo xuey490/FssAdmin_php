@@ -14,7 +14,9 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Framework\Basic\BaseLaORMModel;
+use Framework\Basic\Scopes\LaTenantScope;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\Relation;
 
 /**
  * SysUserTenant 用户-租户关联模型
@@ -200,8 +202,8 @@ class SysUserTenant extends BaseLaORMModel
         /** @var \Illuminate\Database\Eloquent\Collection<int, static> $records */
         $records = self::withoutTenancy()
             ->where('user_id', $userId)
-            ->with(['tenant' => function ($query) {
-                $query->withoutTenancy();
+            ->with(['tenant' => function (Relation $relation) {
+                $relation->getQuery()->withoutGlobalScope(LaTenantScope::class);
             }])
             ->get();
 
