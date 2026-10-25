@@ -8,6 +8,7 @@ vendor
 /.genie/*
 /.kiro/*
 /.trae/*
+/.phpunit.cache/
 
 # 但不要忽略 .gitkeep 文件，
 
