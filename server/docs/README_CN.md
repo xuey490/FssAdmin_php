@@ -112,7 +112,7 @@
 | **依赖注入** | Symfony DI | ^7.3 | 容器与服务 |
 | **HTTP 组件** | Symfony HTTPFoundation | ^7.3 | Request/Response |
 | **路由组件** | Symfony Routing | ^7.3 | URL 匹配 |
-| **ORM (默认)** | Illuminate Database | ^12.0 | Laravel Eloquent ORM |
+| **ORM (默认)** | Illuminate Database | 13.30.* | Laravel Eloquent ORM |
 | **ORM (备选)** | ThinkORM | ^4.0 | ThinkPHP ORM |
 | **权限控制** | Casbin | ^4.1 | RBAC 权限模型 |
 | **JWT 认证** | Lcobucci JWT | ^5.6 | JSON Web Token |
