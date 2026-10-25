@@ -1,34 +1,40 @@
 {
+    "$schema": "https://getcomposer.org/schema.json",
     "name": "xuey490/project",
-    "description": "A lightweight Powerful Fast, Simple, Safty PHP framework",
+    "description": "A lightweight Powerful Fast, Simple, Safety PHP framework",
     "type": "project",
-	 "keywords": [
-		"Fssphp",
+    "keywords": [
+        "Fssphp",
         "WorkerMan",
-		"Symfony",
-		"Thinkphp",
-		"ThinkORM",
-		"FPM",
-		"flexible",
-		"php framework"
-	],
-	
+        "Symfony",
+        "Thinkphp",
+        "ThinkORM",
+        "FPM",
+        "flexible",
+        "php framework"
+    ],
+    "homepage": "https://github.com/xuey490/FssAdmin_php",
     "license": "MIT",
     "authors": [
         {
             "name": "blue2004",
-            "email": "xuey863toy@gmail.com"
+            "email": "xuey863toy@gmail.com",
+            "role": "Developer"
         }
     ],
+    "support": {
+        "issues": "https://github.com/xuey490/FssAdmin_php/issues",
+        "source": "https://github.com/xuey490/FssAdmin_php"
+    },
     "require": {
         "php": "^8.3",
         "casbin/casbin": "^4.2",
         "ezyang/htmlpurifier": "^4.18",
         "guzzlehttp/guzzle": "^7.10",
-        "illuminate/config": "13.30.1",
-        "illuminate/database": "13.30.1 as 12.99.99",
-        "illuminate/events": "13.30.1 as 12.99.99",
-        "illuminate/pagination": "13.30.1",
+        "illuminate/config": "13.30.*",
+        "illuminate/database": "13.30.*",
+        "illuminate/events": "13.30.*",
+        "illuminate/pagination": "13.30.*",
         "intervention/image": "^4.0.4",
         "lcobucci/clock": "^3.5",
         "lcobucci/jwt": "^5.6",
@@ -60,7 +66,7 @@
         "vlucas/phpdotenv": "^5.6",
         "workerman/workerman": "^5.2.0",
         "xuey490/config": "^1.0.4",
-        "xuey490/database": "^1.0.6",
+        "xuey490/database": "dev-main",
         "xuey490/log": "^1.0.2",
         "xuey490/storage": "^1.1.3"
     },
@@ -68,8 +74,8 @@
         "friendsofphp/php-cs-fixer": "^3.88",
         "icanhazstring/composer-unused": "^0.9.5",
         "phpstan/phpstan": "^2.2",
-        "phpunit/phpunit": "*",
-        "symfony/var-dumper": "^6.0 || ^7.0"
+        "phpunit/phpunit": "^12.5",
+        "symfony/var-dumper": "^7.4"
     },
     "autoload": {
         "psr-4": {
@@ -88,11 +94,27 @@
             "Tests\\": "tests/"
         }
     },
-    "config": {
-        "platform-check": false,
-        "preferred-install": "dist",
-        "sort-packages": true
+    "scripts": {
+        "test": "phpunit --configuration phpunit.xml --no-coverage",
+        "test:unit": "phpunit --configuration phpunit.xml --testsuite Unit --no-coverage",
+        "analyse": "phpstan analyse -c phpstan.neon --memory-limit=1G",
+        "cs-fix": "php-cs-fixer fix --diff"
     },
-	"minimum-stability": "stable", 
-	"prefer-stable": true
+    "scripts-descriptions": {
+        "test": "Run the default PHPUnit suite without coverage",
+        "test:unit": "Run the Unit test suite without coverage",
+        "analyse": "Run PHPStan static analysis",
+        "cs-fix": "Apply PHP-CS-Fixer formatting"
+    },
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true
+        },
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "platform-check": false
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }
