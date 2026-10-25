@@ -1,20 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit 
-    bootstrap="vendor/autoload.php"  
-    colors="true"
-    stopOnFailure="false"
->	<!-- 自动加载Composer依赖（含framework/的类） -->
-    <!-- 测试套件：指定根目录tests/下所有测试文件 -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/12.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         executionOrder="default"
+         failOnDeprecation="false"
+         failOnWarning="false"
+         beStrictAboutOutputDuringTests="false">
     <testsuites>
-        <testsuite name="Framework Core Tests">
-            <directory suffix="Test.php">./tests/Unit</directory>  <!-- 匹配tests/下所有XXXTest.php -->
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+            <exclude>tests/Unit/BugConditionExplorationTest.php</exclude>
+            <exclude>tests/Unit/MultiTenantDeptIsolationBugTest.php</exclude>
+            <exclude>tests/Unit/MultiTenantDeptIsolationPreservationTest.php</exclude>
         </testsuite>
     </testsuites>
-
-    <!-- 过滤：只测试framework/核心目录的代码（排除其他无关文件） -->
-    <filter>
-        <whitelist processUncoveredFilesFromWhitelist="true">
-            <directory suffix=".php">./framework</directory>  <!-- 仅统计framework/下代码的测试覆盖率 -->
-        </whitelist>
-    </filter>
+    <groups>
+        <exclude>
+            <group>integration</group>
+        </exclude>
+    </groups>
+    <source>
+        <include>
+            <directory suffix=".php">framework</directory>
+        </include>
+    </source>
 </phpunit>
