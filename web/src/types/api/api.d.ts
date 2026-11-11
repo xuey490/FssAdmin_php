@@ -61,6 +61,23 @@ declare namespace Api {
       total: number
     }
 
+    /**
+     * FssAdmin 后端统一分页返回结构
+     *
+     * 服务端 success() 返回的 data 形如 { list, total, page, limit }，
+     * 与 Art Design Pro 模板自带的 ApiPage（data / current_page）不同，切勿混用。
+     */
+    type ApiListPage<T = any> = {
+      /** 当前页数据 */
+      list: T[]
+      /** 总条数 */
+      total: number
+      /** 当前页码 */
+      page: number
+      /** 每页条数 */
+      limit: number
+    }
+
     /** 分页响应基础结构 */
     interface PaginatedResponse<T = any> {
       records: T[]

@@ -67,7 +67,7 @@
   }
   
   const copyInstanceNo = async () => {
-    const no = String('xdbyvibm6' || '').trim()
+    const no = 'xdbyvibm6'.trim()
     if (!no) return
     try {
       await navigator.clipboard.writeText(no)
