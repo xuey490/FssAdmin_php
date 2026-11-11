@@ -42,7 +42,7 @@
           placeholder="请选择部门"
           style="width: 100%"
           node-key="id"
-          :props="{ label: 'label', value: 'id', children: 'children' }"
+          :props="deptTreeProps"
         />
       </el-form-item>
 
@@ -126,6 +126,19 @@
    * 部门树数据
    */
   const deptTreeData = ref<any[]>([])
+
+  /**
+   * 部门树字段映射
+   *
+   * ElTreeSelect 运行期支持 props.value（用于下拉选项取值），
+   * 但 Element Plus 的 TreeOptionProps 类型未声明该字段，
+   * 故独立声明为变量，避免模板内联对象触发多余属性校验
+   */
+  const deptTreeProps = {
+    label: 'label',
+    value: 'id',
+    children: 'children'
+  }
 
   /**
    * 表单验证规则

@@ -136,6 +136,7 @@
     "unplugin-vue-setup-extend-plus": "1.0.1",
     "vite": "^8.0.13",
     "vite-plugin-compression": "^0.5.1",
+    "vite-plugin-iconify-offline": "^0.4.3",
     "vite-plugin-inspect": "^11.3.3",
     "vite-plugin-vue-devtools": "^8.0.0",
     "vue-demi": "^0.14.9",

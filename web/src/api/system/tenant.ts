@@ -66,7 +66,7 @@ export default {
    * 获取租户关联用户
    */
   users(tenantId: number | string, params: Record<string, any>) {
-    return request.get<Api.Common.ApiPage>({
+    return request.get<Api.Common.ApiListPage>({
       url: '/api/system/tenant/users/' + tenantId,
       params
     })
@@ -76,7 +76,7 @@ export default {
    * 获取可添加用户
    */
   availableUsers(tenantId: number | string, params: Record<string, any>) {
-    return request.get<Api.Common.ApiPage>({
+    return request.get<Api.Common.ApiListPage>({
       url: '/api/system/tenant/available-users/' + tenantId,
       params
     })
