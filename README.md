@@ -22,6 +22,10 @@
 
 **FssAdmin** 适合中小型项目、个人项目，以及企业 OA / ERP / 政务等后台。前端基于 Vue 3 + Vite + TypeScript + Element Plus；后端是自研轻量框架 **FssPHP**，支持多租户 SaaS、Casbin RBAC、插件热插拔与代码生成。
 
+欢迎加入 QQ 交流群：
+
+![QQ 交流群](https://v3.phpframe.org/assets/qqgroup-C2pjhKmS.png)
+
 ---
 
 ## 目录
@@ -542,9 +546,7 @@ server {
 | 微信 | `xdbyvibm6`（点击复制见演示站「赞助」页） |
 | 官网 | https://www.phpframe.org/ |
 
-欢迎加入 QQ 交流群：
 
-![QQ 交流群](https://v3.phpframe.org/assets/qqgroup-C2pjhKmS.png)
 
 ### 技术支援怎么提
 
