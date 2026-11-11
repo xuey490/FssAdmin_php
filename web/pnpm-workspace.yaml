@@ -1,0 +1,23 @@
+# 将 web/ 声明为独立的 pnpm 工作区根。
+#
+# 背景一：pnpm 会向上查找最近的一个 pnpm-workspace.yaml 作为工作区根。
+# 若上层目录（如用户主目录 C:\Users\<user>\pnpm-workspace.yaml）存在该文件，
+# 本目录的 pnpm install 会挂到上层工作区，依赖被链接到上层的 node_modules/.pnpm，
+# 造成 @vue/shared 等传递依赖无法从本项目解析，dev 时报
+# 'Failed to resolve import "@vue/shared" from node_modules/.vite/deps/*.js'。
+# 本文件存在即视为工作区根，packages 为空表示只有当前这一个包。
+packages: []
+
+# 背景二：element-plus 经 unplugin-element-plus 的 useSource 模式直接引用 es 源码入口，
+# 该入口会引用 @vue/shared 等传递依赖。默认的隔离式 node_modules 不把这些包暴露到根目录，
+# 导致 Vite 预构建产物中的裸引用无法解析。改用 hoisted（npm 式扁平）布局即可解决。
+nodeLinker: hoisted
+
+# 允许执行安装脚本的依赖（pnpm 11 默认拦截）
+allowBuilds:
+  '@parcel/watcher': false
+  '@tailwindcss/oxide': true
+  core-js: false
+  es5-ext: false
+  esbuild: true
+  vue-demi: true
