@@ -123,7 +123,7 @@
       align-center
       :close-on-click-modal="false"
     >
-      <ElTabs v-model="activeTab" type="card">
+      <ElTabs v-model="activeTab" class="welcome-dialog-tabs">
         <ElTabPane label="PHP版本" name="php">
           <div class="welcome-dialog">
             <p class="welcome-dialog__intro">
@@ -187,6 +187,67 @@
             <div class="welcome-dialog__links">
 				测试地址暂不可用，期待...
             </div>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="Golang版本" name="golang">
+          <div class="welcome-dialog">
+            <p class="welcome-dialog__intro">
+              基于 GoFrame 的企业级管理后台 REST API 服务：JWT 鉴权、多租户、Redis
+              缓存、RBAC、定时任务、监控与运维能力等，提供 OpenAPI（/api.json）与 Swagger（/docs）
+            </p>
+            <ul class="welcome-dialog__list">
+              <li>
+                适配 SoyAdmin：
+                <a href="https://gf.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://gf.phpframe.org</a
+                >
+              </li>
+              <li>
+                适配 Art Design Pro：
+                <a href="https://goframe.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://goframe.phpframe.org</a
+                >
+              </li>
+            </ul>
+            <p class="welcome-dialog__footer">Goframe 版本开源中，欢迎关注 &amp; Star：</p>
+            <div class="welcome-dialog__links">
+              <a
+                href="https://gitee.com/fsscms/FssAdmin_goframe"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Gitee</a
+              >
+              <a
+                href="https://github.com/xuey490/FssAdmin_goframe"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub</a
+              >
+            </div>
+          </div>
+        </ElTabPane>
+        <ElTabPane label="Java Spring Boot 4.x" name="java">
+          <div class="welcome-dialog">
+            <p class="welcome-dialog__intro">
+              FssAdmin
+              是一个多租户后台管理系统与应用开发底座。系统将认证、组织架构、菜单权限、审计、文件和消息等基础能力集中提供给业务模块，并支持将部分服务独立部署。
+            </p>
+            <p class="welcome-dialog__footer">技术栈：</p>
+            <ul class="welcome-dialog__list">
+              <li>Java 21、Maven Wrapper</li>
+              <li>Spring Boot 4.1.2 / Spring Framework 7</li>
+              <li>Spring Cloud 2025.1.4、Spring Cloud Alibaba</li>
+            </ul>
+            <p class="welcome-dialog__footer">可以单体启动，也可以微服务启动。</p>
+            <ul class="welcome-dialog__list">
+              <li>
+                在线演示：
+                <a href="https://java.phpframe.org/" target="_blank" rel="noopener noreferrer"
+                  >https://java.phpframe.org/</a
+                >
+              </li>
+              <li> 商业版联系微信：<span class="welcome-dialog__wechat">xdbyvibm6</span> </li>
+            </ul>
           </div>
         </ElTabPane>
       </ElTabs>
@@ -490,6 +551,29 @@
           text-decoration: underline;
         }
       }
+    }
+
+    &__wechat {
+      padding: 1px 6px;
+      border-radius: 4px;
+      background-color: var(--el-fill-color-light);
+      color: var(--el-text-color-primary);
+      font-weight: 500;
+      font-family: Consolas, Monaco, monospace;
+      user-select: all;
+    }
+  }
+
+  // 五个 Tab 时压缩左右内边距，避免标签溢出
+  .welcome-dialog-tabs {
+    :deep(.el-tabs__item) {
+      padding: 0 16px;
+    }
+
+    // 内容区限高滚动，避免不同版本内容长短导致弹窗高度跳动
+    :deep(.el-tabs__content) {
+      max-height: 340px;
+      overflow-y: auto;
     }
   }
 </style>
